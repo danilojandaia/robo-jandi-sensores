@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teste dos sensores do tablet · Robô Jandi</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --tx:#1b1f24; --mut:#5d6672; --ok:#1f7a3f; --warn:#a15c00; --bad:#b3261e; --acc:#1d4ed8; --ln:#e3e6ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --card:#1b2026; --tx:#e9edf1; --mut:#9aa4b0; --ln:#2b323a; --acc:#7aa2ff; --ok:#5cc184; --warn:#e3a23b; --bad:#ff7a70; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--tx); }
+  main { max-width:900px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:4px 0 2px; }
+  .sub { color:var(--mut); margin:0 0 14px; }
+  .card { background:var(--card); border:1px solid var(--ln); border-radius:14px; padding:14px 16px; margin-bottom:12px; }
+  .card h2 { font-size:17px; margin:0 0 8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .m { border:1px solid var(--ln); border-radius:10px; padding:10px; }
+  .m .k { color:var(--mut); font-size:13px; }
+  .m .v { font-size:26px; font-weight:650; font-variant-numeric:tabular-nums; }
+  button { font:inherit; font-weight:600; padding:12px 16px; border-radius:10px; border:1px solid var(--ln); background:var(--card); color:var(--tx); cursor:pointer; margin:4px 6px 4px 0; }
+  button.pri { background:var(--acc); color:#fff; border-color:var(--acc); }
+  button:disabled { opacity:.45; cursor:default; }
+  .diag li { margin:3px 0; }
+  .ok { color:var(--ok); font-weight:600; } .warn { color:var(--warn); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .status { font-weight:600; min-height:1.4em; }
+  .bar { height:8px; background:var(--ln); border-radius:6px; overflow:hidden; margin-top:6px; }
+  .bar i { display:block; height:100%; width:0; background:var(--acc); transition:width .2s linear; }
+  #push { font-size:20px; font-weight:700; }
+  textarea { width:100%; min-height:220px; font:13px/1.4 ui-monospace, Menlo, Consolas, monospace; border:1px solid var(--ln); border-radius:10px; padding:10px; background:var(--bg); color:var(--tx); }
+  ol.steps li { margin:4px 0; }
+  .hint { color:var(--mut); font-size:14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Teste dos sensores do tablet</h1>
+  <p class="sub">Robô Jandi · Prefeitura de Jandaia. Abra no Galaxy Tab A11+, pelo Chrome, e siga os passos. Leva uns 3 minutos.</p>
+
+  <div class="card">
+    <h2>1. Ligar os sensores</h2>
+    <p class="hint">Deixe o tablet em pé, na horizontal (deitado de lado), encostado em algo firme, como vai ficar no robô.</p>
+    <button class="pri" id="btnStart">Ligar sensores</button>
+    <div class="status" id="startStatus"></div>
+    <ul class="diag" id="diag"></ul>
+  </div>
+
+  <div class="card">
+    <h2>Leitura ao vivo</h2>
+    <div class="grid">
+      <div class="m"><div class="k">Inclinação (acelerômetro)</div><div class="v" id="vPitch">–</div></div>
+      <div class="m"><div class="k">Giro (giroscópio integrado)</div><div class="v" id="vYaw">–</div></div>
+      <div class="m"><div class="k">Velocidade de giro</div><div class="v" id="vRate">–</div></div>
+      <div class="m"><div class="k">Leituras por segundo</div><div class="v" id="vHz">–</div></div>
+      <div class="m"><div class="k">Bússola (magnetômetro)</div><div class="v" id="vMag">–</div></div>
+    </div>
+    <p><button id="btnZero" disabled>Zerar (cabeça reta)</button></p>
+    <div id="push" aria-live="polite"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Testes</h2>
+    <ol class="steps">
+      <li><b>Parado (20 s):</b> não toque no tablet nem na mesa. Mede o ruído da inclinação e quanto o giro "escorrega" sozinho.</li>
+      <li><b>Giro de 90°:</b> marque na mesa uma posição de frente e outra a 90° (a quina da mesa serve). Aperte, gire o tablet até a marca de 90°, volte para a de frente e aperte "Terminei".</li>
+      <li><b>Empurrões (15 s):</b> deixe parado e dê 3 toques leves de lado no tablet, como alguém esbarrando.</li>
+      <li><b>Bússola perto do servo (15 s):</b> aproxime um servo, um ímã ou o carregador do tablet e afaste de novo.</li>
+    </ol>
+    <button id="t1" disabled>Teste 1: parado</button>
+    <button id="t2" disabled>Teste 2: giro de 90°</button>
+    <button id="t3" disabled>Teste 3: empurrões</button>
+    <button id="t4" disabled>Teste 4: bússola</button>
+    <div class="status" id="testStatus"></div>
+    <div class="bar"><i id="prog"></i></div>
+  </div>
+
+  <div class="card">
+    <h2>3. Resultado</h2>
+    <div id="verdict"></div>
+    <p>
+      <button class="pri" id="btnSave" disabled>Enviar resultado para o Claude</button>
+      <button id="btnCopy">Copiar resultado</button>
+    </p>
+    <p class="hint" id="copyHint">Depois dos testes, toque em "Copiar resultado" e cole na conversa com o Claude.</p>
+    <div class="status" id="saveStatus"></div>
+    <textarea id="out" readonly placeholder="Os resultados aparecem aqui."></textarea>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const R = { meta:{}, diag:{}, t1:null, t2:null, t3:null, t4:null };
+  const S = {
+    on:false, n:0, lastTs:null, hzWin:[], gx:0, gy:0, gz:0, gInit:false,
+    pitch:null, pitchZero:0, yaw:0, yawRate:0, pitchRate:0, prevPitch:null,
+    bias:0, mag:null, magCount:0, motionCount:0, absCount:0, relCount:0,
+    rec:null, pushes:0, lastPush:0
+  };
+  const fmt = (x, d=1) => (x==null||!isFinite(x)) ? '–' : x.toFixed(d).replace('.', ',');
+  const mean = a => a.reduce((s,x)=>s+x,0)/(a.length||1);
+  const std = a => { const m = mean(a); return Math.sqrt(mean(a.map(x=>(x-m)*(x-m)))); };
+  const circDiff = (a,b) => { let d = a-b; while (d>180) d-=360; while (d<-180) d+=360; return d; };
+
+  R.meta.userAgent = navigator.userAgent;
+  R.meta.when = new Date().toISOString();
+  R.meta.secure = window.isSecureContext;
+  R.meta.inIframe = (window.self !== window.top);
+
+  function diagLine(label, ok, extra) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="${ok===true?'ok':ok===false?'bad':'warn'}">${ok===true?'Sim':ok===false?'Não':'?'}</span> · ${label}${extra?` <span class="hint">(${extra})</span>`:''}`;
+    $('diag').appendChild(li);
+  }
+
+  function policy(f) {
+    try {
+      const fp = document.permissionsPolicy || document.featurePolicy;
+      return fp ? fp.allowsFeature(f) : null;
+    } catch(e) { return null; }
+  }
+
+  $('btnStart').onclick = async () => {
+    $('btnStart').disabled = true;
+    $('diag').innerHTML = '';
+    $('startStatus').textContent = 'Ligando...';
+    try {
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        await DeviceMotionEvent.requestPermission();
+      }
+    } catch(e) {}
+    const d = R.diag;
+    d.apiMotion = 'DeviceMotionEvent' in window;
+    d.apiOrient = 'DeviceOrientationEvent' in window;
+    d.apiAbsolute = 'ondeviceorientationabsolute' in window;
+    d.genericGyro = 'Gyroscope' in window;
+    d.genericAccel = 'Accelerometer' in window;
+    d.policyAccel = policy('accelerometer');
+    d.policyGyro = policy('gyroscope');
+    d.policyMag = policy('magnetometer');
+
+    window.addEventListener('devicemotion', onMotion);
+    window.addEventListener('deviceorientation', () => { S.relCount++; });
+    window.addEventListener('deviceorientationabsolute', e => { S.absCount++; if (e.alpha!=null) { S.mag = e.alpha; S.magCount++; } });
+
+    // Wake lock para a tela não apagar durante o teste
+    try { if (navigator.wakeLock) await navigator.wakeLock.request('screen'); } catch(e) {}
+
+    setTimeout(() => {
+      d.motionEvents2s = S.motionCount;
+      d.gyroPresent = S.gyroSeen === true;
+      d.accelPresent = S.accelSeen === true;
+      d.absEvents2s = S.absCount;
+      diagLine('Página segura (HTTPS)', R.meta.secure);
+      diagLine('Navegador libera acelerômetro nesta página', d.policyAccel, d.policyAccel===null?'sem informação':'');
+      diagLine('Navegador libera giroscópio nesta página', d.policyGyro, d.policyGyro===null?'sem informação':'');
+      diagLine('Leituras de movimento chegando', S.motionCount>0, `${S.motionCount} em 2 s`);
+      diagLine('Acelerômetro respondendo', !!S.accelSeen);
+      diagLine('Giroscópio respondendo', !!S.gyroSeen);
+      diagLine('Bússola (orientação absoluta) respondendo', S.magCount>0, `${S.magCount} em 2 s`);
+      if (S.motionCount>0 && S.gyroSeen) {
+        $('startStatus').innerHTML = '<span class="ok">Sensores ligados. Toque em "Zerar" com o tablet reto e faça os testes.</span>';
+        ['btnZero','t1','t2','t3','t4'].forEach(id => $(id).disabled = false);
+        S.on = true;
+      } else if (S.motionCount===0) {
+        $('startStatus').innerHTML = R.meta.inIframe
+          ? '<span class="bad">Nenhuma leitura chegou.</span> A moldura desta página bloqueia os sensores. Abra o endereço direto no navegador.'
+          : '<span class="bad">Nenhuma leitura chegou.</span> No computador é normal: ele não tem esses sensores. No iPhone, toque de novo em "Ligar sensores" e permita "Movimento e orientação" quando o Safari pedir.';
+        $('btnStart').disabled = false;
+        R.diag.semLeituras = true;
+      } else {
+        $('startStatus').innerHTML = '<span class="warn">O acelerômetro responde, mas o giroscópio não.</span>';
+        ['btnZero','t1','t3'].forEach(id => $(id).disabled = false);
+        S.on = true;
+      }
+      render();
+    }, 2000);
+  };
+
+  function onMotion(e) {
+    S.motionCount++;
+    const g = e.accelerationIncludingGravity, r = e.rotationRate;
+    const ts = e.timeStamp;
+    if (S.lastTs!=null) {
+      const dt = (ts - S.lastTs)/1000;
+      if (dt>0 && dt<0.5) { S.hzWin.push(dt); if (S.hzWin.length>60) S.hzWin.shift(); }
+    }
+    const prevTs = S.lastTs; S.lastTs = ts;
+    if (g && g.x!=null) {
+      S.accelSeen = true;
+      const a = S.gInit ? 0.15 : 1;
+      S.gx += a*(g.x - S.gx); S.gy += a*(g.y - S.gy); S.gz += a*(g.z - S.gz); S.gInit = true;
+      const n = Math.hypot(S.gx, S.gy, S.gz) || 1;
+      const p = Math.asin(Math.max(-1, Math.min(1, S.gz/n))) * 180/Math.PI;
+      if (S.pitch!=null && prevTs!=null) { const dt=(ts-prevTs)/1000; if (dt>0) S.pitchRate = (p - S.pitch)/dt; }
+      S.pitch = p;
+    }
+    if (r && (r.alpha!=null || r.beta!=null || r.gamma!=null)) {
+      S.gyroSeen = true;
+      const n = Math.hypot(S.gx, S.gy, S.gz) || 1;
+      const ux = S.gx/n, uy = S.gy/n, uz = S.gz/n;
+      // rotationRate: alpha = eixo z, beta = eixo x, gamma = eixo y (graus/s)
+      const wx = r.beta||0, wy = r.gamma||0, wz = r.alpha||0;
+      const raw = wx*ux + wy*uy + wz*uz;          // giro em torno da vertical do mundo
+      S.rawRate = raw;
+      S.yawRate = raw - S.bias;
+      if (prevTs!=null) { const dt=(ts-prevTs)/1000; if (dt>0 && dt<0.5) S.yaw += S.yawRate*dt; }
+    }
+    // Detector de empurrão: giro ou inclinação rápidos sem comando
+    const now = performance.now();
+    if (S.on && (Math.abs(S.yawRate)>20 || Math.abs(S.pitchRate)>25) && now - S.lastPush > 500) {
+      S.lastPush = now; S.pushes++;
+      $('push').innerHTML = `<span class="warn">Movimento sem comando detectado (${S.pushes})</span>`;
+      if (S.rec && S.rec.kind==='t3') S.rec.events.push({t:Math.round(now - S.rec.t0), yawRate:+S.yawRate.toFixed(1), pitchRate:+S.pitchRate.toFixed(1)});
+    }
+    if (S.rec) sample();
+  }
+
+  function sample() {
+    const rec = S.rec;
+    rec.pitch.push(S.pitch - S.pitchZero);
+    rec.rate.push(S.rawRate||0);
+    rec.yaw.push(S.yaw);
+    if (S.mag!=null) rec.mag.push(S.mag);
+  }
+
+  function render() {
+    $('vPitch').textContent = S.pitch==null ? '–' : fmt(S.pitch - S.pitchZero) + '°';
+    $('vYaw').textContent = fmt(S.yaw) + '°';
+    $('vRate').textContent = fmt(S.yawRate) + '°/s';
+    $('vHz').textContent = S.hzWin.length ? fmt(1/mean(S.hzWin), 0) : '–';
+    $('vMag').textContent = S.mag==null ? '–' : fmt(S.mag, 0) + '°';
+    requestAnimationFrame(render);
+  }
+
+  $('btnZero').onclick = () => { S.pitchZero = S.pitch||0; S.yaw = 0; S.pushes = 0; $('push').textContent=''; };
+
+  function startRec(kind, secs, label, done) {
+    ['t1','t2','t3','t4'].forEach(id => $(id).disabled = true);
+    S.rec = { kind, t0: performance.now(), pitch:[], rate:[], yaw:[], mag:[], events:[] };
+    $('testStatus').textContent = label;
+    if (secs) {
+      const t0 = performance.now();
+      const iv = setInterval(() => {
+        const f = (performance.now()-t0)/(secs*1000);
+        $('prog').style.width = Math.min(100, f*100) + '%';
+        if (f>=1) { clearInterval(iv); finish(done); }
+      }, 100);
+    }
+  }
+  function finish(done) {
+    const rec = S.rec; S.rec = null;
+    $('prog').style.width = '0';
+    ['t1','t2','t3','t4'].forEach(id => $(id).disabled = false);
+    done(rec);
+    report();
+  }
+
+  // Teste 1: parado 20 s. 10 s estimam o desvio do giroscópio, 10 s medem a deriva já corrigida.
+  $('t1').onclick = () => {
+    S.bias = 0; S.yaw = 0;
+    startRec('t1', 10, 'Parado: não toque em nada (1/2)...', rec1 => {
+      const bias = mean(rec1.rate);
+      const driftRaw = bias * 60;                // graus por minuto sem correção
+      S.bias = bias; S.yaw = 0;
+      startRec('t1', 10, 'Parado: não toque em nada (2/2)...', rec2 => {
+        const n = rec2.yaw.length;
+        const dur = 10/60;
+        const driftCorr = n ? (rec2.yaw[n-1] - rec2.yaw[0]) / dur : null;
+        R.t1 = {
+          amostras: rec1.rate.length + rec2.rate.length,
+          hz: S.hzWin.length ? Math.round(1/mean(S.hzWin)) : null,
+          inclinacao_ruido_graus: +std(rec1.pitch.concat(rec2.pitch)).toFixed(3),
+          giro_desvio_graus_s: +bias.toFixed(4),
+          giro_deriva_bruta_graus_min: +driftRaw.toFixed(2),
+          giro_deriva_corrigida_graus_min: driftCorr==null?null:+driftCorr.toFixed(2),
+          giro_ruido_graus_s: +std(rec2.rate).toFixed(3)
+        };
+        $('testStatus').innerHTML = '<span class="ok">Teste 1 concluído.</span>';
+      });
+    });
+  };
+
+  // Teste 2: giro de 90° e volta
+  function t2Start() {
+    S.yaw = 0;
+    startRec('t2', 0, 'Gire até a marca de 90°, volte para a frente e toque em "Terminei".', () => {});
+    $('t2').textContent = 'Terminei';
+    $('t2').disabled = false;
+    $('t2').onclick = t2End;
+  }
+  function t2End() {
+    const rec = S.rec; S.rec = null;
+    ['t1','t3','t4'].forEach(id => $(id).disabled = false);
+    const peak = rec.yaw.reduce((m,x)=>Math.abs(x)>Math.abs(m)?x:m, 0);
+    const end = rec.yaw.length ? rec.yaw[rec.yaw.length-1] : null;
+    R.t2 = {
+      giro_maximo_medido_graus: +peak.toFixed(1),
+      erro_ao_voltar_graus: end==null?null:+end.toFixed(1),
+      duracao_s: +((performance.now()-rec.t0)/1000).toFixed(1),
+      desvio_corrigido: S.bias!==0
+    };
+    $('t2').textContent = 'Teste 2: giro de 90°';
+    $('t2').onclick = t2Start;
+    $('testStatus').innerHTML = '<span class="ok">Teste 2 concluído.</span>';
+    report();
+  }
+  $('t2').onclick = t2Start;
+
+  // Teste 3: empurrões
+  $('t3').onclick = () => {
+    S.pushes = 0;
+    startRec('t3', 15, 'Dê 3 toques leves de lado no tablet...', rec => {
+      R.t3 = { empurroes_detectados: rec.events.length, eventos: rec.events.slice(0,10), pedido: 3 };
+      $('testStatus').innerHTML = `<span class="ok">Teste 3 concluído: ${rec.events.length} detectado(s).</span>`;
+    });
+  };
+
+  // Teste 4: bússola perto do servo
+  $('t4').onclick = () => {
+    startRec('t4', 15, 'Aproxime um servo, ímã ou carregador do tablet e afaste...', rec => {
+      if (!rec.mag.length) { R.t4 = { leituras:0 }; return; }
+      const base = rec.mag[0];
+      const dev = rec.mag.map(m => circDiff(m, base));
+      R.t4 = {
+        leituras: rec.mag.length,
+        desvio_maximo_graus: +Math.max(...dev.map(Math.abs)).toFixed(1),
+        giro_real_no_periodo_graus: rec.yaw.length ? +(Math.max(...rec.yaw) - Math.min(...rec.yaw)).toFixed(1) : null
+      };
+      $('testStatus').innerHTML = '<span class="ok">Teste 4 concluído.</span>';
+    });
+  };
+
+  function verdictHtml() {
+    const v = [];
+    const d = R.diag;
+    if (d.motionEvents2s===0) v.push('<li class="bad">Sem leituras: os sensores não chegaram a esta página.</li>');
+    if (R.t1) {
+      const r = R.t1;
+      v.push(`<li class="${r.inclinacao_ruido_graus<0.5?'ok':'warn'}">Inclinação: ruído de ${fmt(r.inclinacao_ruido_graus,2)}°. ${r.inclinacao_ruido_graus<0.5?'Serve para corrigir o servo.':'Alto; precisa de filtro.'}</li>`);
+      if (r.giro_deriva_corrigida_graus_min!=null) {
+        const x = Math.abs(r.giro_deriva_corrigida_graus_min);
+        v.push(`<li class="${x<2?'ok':x<10?'warn':'bad'}">Giro: deriva de ${fmt(x,2)}°/min depois da correção (${fmt(Math.abs(r.giro_deriva_bruta_graus_min),2)}°/min sem correção). ${x<2?'Basta zerar pela câmera de vez em quando.':x<10?'Precisa zerar pela câmera com frequência.':'Alto: o giro precisa de outra referência.'}</li>`);
+      }
+      v.push(`<li class="${r.hz>=50?'ok':'warn'}">Velocidade: ${r.hz} leituras por segundo.</li>`);
+    }
+    if (R.t2) {
+      const e = Math.abs(R.t2.erro_ao_voltar_graus), p = Math.abs(R.t2.giro_maximo_medido_graus);
+      v.push(`<li class="${Math.abs(p-90)<6?'ok':'warn'}">Giro de 90°: o tablet mediu ${fmt(p)}°.</li>`);
+      v.push(`<li class="${e<3?'ok':'warn'}">Ao voltar para a frente, sobrou ${fmt(e)}° de erro.</li>`);
+    }
+    if (R.t3) v.push(`<li class="${R.t3.empurroes_detectados>=3?'ok':'warn'}">Empurrões: ${R.t3.empurroes_detectados} detectado(s) de 3.</li>`);
+    if (R.t4) {
+      if (!R.t4.leituras) v.push('<li class="warn">Bússola: sem leituras.</li>');
+      else v.push(`<li class="${R.t4.desvio_maximo_graus>20?'warn':'ok'}">Bússola: desviou até ${fmt(R.t4.desvio_maximo_graus)}° com o objeto perto. ${R.t4.desvio_maximo_graus>20?'Confirma que não dá para confiar nela perto do servo.':'Pouca interferência.'}</li>`);
+    }
+    return v.length ? `<ul>${v.join('')}</ul>` : '<p class="hint">Faça os testes para ver o resultado.</p>';
+  }
+
+  function report() {
+    R.meta.when = new Date().toISOString();
+    $('verdict').innerHTML = verdictHtml();
+    $('out').value = JSON.stringify(R, null, 2);
+    $('btnSave').disabled = !(R.t1 || R.t2 || R.t3 || R.t4) || !DB;
+    $('btnSave').style.display = DB ? '' : 'none';
+    $('copyHint').style.display = DB ? 'none' : '';
+  }
+
+  $('btnCopy').onclick = async () => {
+    $('out').value = JSON.stringify(R, null, 2);
+    try { await navigator.clipboard.writeText($('out').value); $('saveStatus').textContent = 'Texto copiado.'; }
+    catch(e) { $('out').select(); document.execCommand && document.execCommand('copy'); $('saveStatus').textContent = 'Texto selecionado: copie e cole na conversa.'; }
+  };
+
+  // Envio do resultado para o Claude ler (banco do artifact)
+  let DB = null;
+  (async () => {
+    try {
+      if (window.claude && claude.use) {
+        DB = await claude.use('db');
+        report();
+      }
+    } catch(e) { DB = null; }
+  })();
+  $('btnSave').onclick = async () => {
+    if (!DB) { $('saveStatus').textContent = 'Envio indisponível aqui. Use "Copiar texto".'; return; }
+    $('btnSave').disabled = true;
+    $('saveStatus').textContent = 'Enviando...';
+    try {
+      const id = 'teste-' + Date.now();
+      await DB.doc('testes/' + id).set(JSON.parse(JSON.stringify(R)));
+      $('saveStatus').innerHTML = '<span class="ok">Enviado. Pode avisar o Claude na conversa.</span>';
+    } catch(e) {
+      $('saveStatus').innerHTML = '<span class="bad">Não consegui enviar.</span> Use "Copiar texto" e cole na conversa.';
+    }
+    $('btnSave').disabled = false;
+  };
+
+  report();
+})();
+</script>
+</body>
+</html>
