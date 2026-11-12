@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000000">
 <meta name="referrer" content="no-referrer">
+<!-- A chave só pode ir para a Anthropic: nenhum script (nem do CDN) consegue mandá-la para outro lugar por fetch ou imagem -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; connect-src https://api.anthropic.com https://cdn.jsdelivr.net https://storage.googleapis.com; worker-src blob:; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <title>Jandi · teste real</title>
 <style>
 :root { --acento: #78e6ff; --texto: #e6f4fa; --suave: #8aa5b3; --painel: rgba(10, 22, 28, .92); --linha: #24414f; color-scheme: dark; }
@@ -402,35 +404,45 @@ function esperarFimDaFala() {
 
 // ======================= voz: ouvir (segurar para falar) =======================
 const Reconhecimento = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, segurando = false, parcial = '', finalTexto = '';
+let sessaoVoz = null, segurando = false;
+// Cada aperto do botão tem a própria sessão: um aperto novo nunca mistura texto nem microfone com o anterior
 function comecarAOuvir() {
   if (!Reconhecimento) { $('#entradaTexto').classList.add('ver'); $('#texto').focus(); return; }
   conversa?.ctrl?.abort(); calar();
+  if (sessaoVoz) { sessaoVoz.ativa = false; try { sessaoVoz.rec.abort(); } catch {} sessaoVoz = null; }
   if (!conversa) iniciarConversa({ semSaudacao: true });
-  segurando = true; parcial = ''; finalTexto = '';
+  if (!conversa) { E.estado = 'livre'; return; }
+  const s = { rec: new Reconhecimento(), acumulado: '', final: '', parcial: '', ativa: true, segurando: true };
+  sessaoVoz = s; segurando = true;
   E.estado = 'ouvindo';
   $('#falar').classList.add('ativo'); $('#falar').textContent = 'Solte para enviar';
-  rec = new Reconhecimento();
-  rec.lang = 'pt-BR'; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
-  rec.onresult = e => {
+  const r = s.rec;
+  r.lang = 'pt-BR'; r.interimResults = true; r.continuous = true; r.maxAlternatives = 1;
+  r.onresult = e => {
+    if (!s.ativa) return;
     let fim = '', meio = '';
     for (let i = 0; i < e.results.length; i++) (e.results[i].isFinal ? (fim += e.results[i][0].transcript) : (meio += e.results[i][0].transcript));
-    finalTexto = fim; parcial = meio;
-    legenda(`<span id="ouvindo">${escapar((fim + ' ' + meio).trim()) || 'Ouvindo...'}</span>`, true);
+    s.final = fim; s.parcial = meio;
+    legenda(`<span id="ouvindo">${escapar(juntar(s.acumulado, fim, meio)) || 'Ouvindo...'}</span>`, true);
   };
-  rec.onerror = e => { if (e.error !== 'aborted' && e.error !== 'no-speech') { log('microfone: ' + e.error); pil('#pVoz', 'microfone: ' + e.error, 'erro'); } };
-  rec.onend = () => { if (segurando) try { rec.start(); } catch {} };
-  try { rec.start(); pil('#pVoz', 'ouvindo', 'ok'); } catch (e) { log('não deu para ouvir: ' + e.message); }
+  r.onerror = e => { if (s.ativa && e.error !== 'aborted' && e.error !== 'no-speech') { log('microfone: ' + e.error); pil('#pVoz', 'microfone: ' + e.error, 'erro'); } };
+  // o Safari encerra a sessão numa pausa: guarda o que já ouviu antes de recomeçar
+  r.onend = () => { s.acumulado = juntar(s.acumulado, s.final, s.parcial); s.final = s.parcial = ''; if (s.ativa && s.segurando) try { r.start(); } catch {} };
+  try { r.start(); pil('#pVoz', 'ouvindo', 'ok'); } catch (e) { log('não deu para ouvir: ' + e.message); }
 }
+const juntar = (...partes) => partes.join(' ').replace(/\s+/g, ' ').trim();
 async function pararDeOuvir() {
-  if (!segurando) return;
-  segurando = false;
+  const s = sessaoVoz;
+  if (!s || !s.segurando) return;
+  s.segurando = false; segurando = false;
   $('#falar').classList.remove('ativo'); $('#falar').textContent = 'Segure para falar';
   await esperar(450); // o Safari entrega as últimas palavras logo depois de soltar
-  try { rec?.stop(); } catch {}
+  try { s.rec.stop(); } catch {}
   await esperar(250);
-  const texto = (finalTexto + ' ' + parcial).replace(/\s+/g, ' ').trim();
-  rec = null;
+  const texto = juntar(s.acumulado, s.final, s.parcial);
+  s.ativa = false;
+  if (sessaoVoz === s) sessaoVoz = null;
+  if (sessaoVoz) return; // já há outro aperto em andamento: este texto foi interrompido por ele
   pil('#pVoz', 'voz pronta', 'ok');
   if (!texto) { E.estado = conversa ? 'ouvindo' : 'livre'; legenda(''); return; }
   enviarFala(texto);
@@ -470,6 +482,18 @@ async function* lerSSE(resposta) {
   }
 }
 async function chamarClaude(mensagens, aoTexto, sinal) {
+  // Prazo: 30 s até começar e 20 s sem nada novo no meio da resposta (rede móvel que trava sem fechar)
+  const ctrl = new AbortController();
+  let estourou = false, timer = 0;
+  const armar = ms => { clearTimeout(timer); timer = setTimeout(() => { estourou = true; ctrl.abort(); }, ms); };
+  const repassar = () => ctrl.abort();
+  sinal.addEventListener('abort', repassar, { once: true });
+  armar(30000);
+  try { return await pedirAoClaude(mensagens, aoTexto, ctrl.signal, () => armar(20000)); }
+  catch (e) { if (estourou) throw new Error('o Claude demorou demais para responder'); throw e; }
+  finally { clearTimeout(timer); sinal.removeEventListener('abort', repassar); }
+}
+async function pedirAoClaude(mensagens, aoTexto, sinal, vivo) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST', signal: sinal,
     headers: { 'content-type': 'application/json', 'x-api-key': chave(), 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
@@ -484,9 +508,11 @@ async function chamarClaude(mensagens, aoTexto, sinal) {
     try { const j = await r.json(); msg += ': ' + (j.error?.message || ''); } catch {}
     throw new Error(msg);
   }
-  const blocos = []; let parada = '', uso = {};
+  const blocos = []; let parada = '', uso = {}, completa = false;
   for await (const ev of lerSSE(r)) {
-    if (ev.type === 'message_start') uso = { ...ev.message.usage };
+    vivo();
+    if (ev.type === 'message_stop') completa = true;
+    else if (ev.type === 'message_start') uso = { ...ev.message.usage };
     else if (ev.type === 'content_block_start') blocos[ev.index] = ev.content_block.type === 'tool_use' ? { ...ev.content_block, json: '' } : { type: 'text', text: '' };
     else if (ev.type === 'content_block_delta') {
       const b = blocos[ev.index];
@@ -495,6 +521,8 @@ async function chamarClaude(mensagens, aoTexto, sinal) {
     } else if (ev.type === 'message_delta') { parada = ev.delta.stop_reason || parada; if (ev.usage) uso.output_tokens = ev.usage.output_tokens; }
     else if (ev.type === 'error') throw new Error(ev.error?.message || 'erro no streaming');
   }
+  // Resposta cortada no meio (rede caiu): não entra no histórico, senão um tool_use sem resultado trava a conversa
+  if (!completa) throw new Error('a resposta chegou cortada');
   const conteudo = blocos.filter(Boolean).map(b => b.type === 'tool_use'
     ? { type: 'tool_use', id: b.id, name: b.name, input: (() => { try { return b.json ? JSON.parse(b.json) : {}; } catch { return {}; } })() }
     : { type: 'text', text: b.text }).filter(b => b.type !== 'text' || b.text);
@@ -529,7 +557,7 @@ setInterval(() => {
 }, 1000);
 async function enviarFala(texto) {
   if (!conversa) iniciarConversa({ semSaudacao: true });
-  if (!conversa) return;
+  if (!conversa) { E.estado = 'livre'; return; }
   log('você: ' + texto);
   await turno(texto);
 }
@@ -537,7 +565,9 @@ async function turno(textoUsuario) {
   const c = conversa; if (!c) return;
   c.ctrl?.abort(); calar();
   const ctrl = new AbortController(); c.ctrl = ctrl;
-  c.historico.push({ role: 'user', content: textoUsuario });
+  const ultima = c.historico.at(-1);
+  if (ultima?.role === 'user' && typeof ultima.content === 'string') ultima.content += '\n' + textoUsuario; // turno anterior falhou
+  else c.historico.push({ role: 'user', content: textoUsuario });
   ultimaConversa = Date.now();
   E.estado = 'pensando'; legenda('');
   let falado = '', frase = '';
@@ -556,7 +586,9 @@ async function turno(textoUsuario) {
     for (let volta = 0; volta < 3; volta++) {
       const { conteudo, parada } = await chamarClaude(c.historico, aoTexto, ctrl.signal);
       if (conversa !== c) return;
-      if (conteudo.length) c.historico.push({ role: 'assistant', content: conteudo });
+      // Um tool_use só fica no histórico quando vai ter resposta (parada por limite de tamanho não tem)
+      const guardar = parada === 'tool_use' ? conteudo : conteudo.filter(b => b.type !== 'tool_use');
+      if (guardar.length) c.historico.push({ role: 'assistant', content: guardar });
       if (parada !== 'tool_use') break;
       const resultados = [];
       for (const b of conteudo.filter(b => b.type === 'tool_use')) {
