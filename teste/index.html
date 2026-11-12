@@ -27,7 +27,7 @@ input[type=password], input[type=text], select { width: 100%; background: #08141
 #legenda { position: fixed; left: 12px; right: 12px; bottom: calc(118px + env(safe-area-inset-bottom)); text-align: center; font-size: 19px; text-wrap: balance; text-shadow: 0 1px 3px #000; min-height: 1em; pointer-events: none; }
 #ouvindo { color: #5fd39a; font-size: 15px; }
 #base { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: center; background: linear-gradient(transparent, rgba(0,0,0,.85) 35%); }
-#falar { flex: 1; height: 64px; border-radius: 32px; font-size: 18px; font-weight: 600; background: #155a73; border-color: #2a8ab0; touch-action: none; user-select: none; -webkit-user-select: none; }
+#falar { flex: 1; min-height: 64px; border-radius: 32px; font-size: 16px; line-height: 1.2; font-weight: 600; background: #155a73; border-color: #2a8ab0; touch-action: none; user-select: none; -webkit-user-select: none; }
 #falar.ativo { background: #1f7a52; border-color: #5fd39a; }
 .redondo { width: 52px; height: 52px; border-radius: 26px; padding: 0; font-size: 20px; }
 #cam { position: fixed; right: 10px; top: calc(max(10px, env(safe-area-inset-top)) + 72px); width: 96px; border-radius: 10px; border: 1px solid #23414e; transform: scaleX(-1); display: none; background: #111; }
@@ -64,12 +64,13 @@ input[type=password], input[type=text], select { width: 100%; background: #08141
 
 <div class="folha" id="folhaAjustes" role="dialog" aria-modal="true" aria-labelledby="tAjustes"><div>
   <h2 id="tAjustes">Ajustes do teste</h2>
-  <p>Teste real do robô no iPhone: a câmera frontal acha seu rosto, os olhos e o pescoço (simulado) te seguem, você fala segurando o botão e o Claude responde com voz.</p>
+  <p>Teste real do robô no iPhone: a câmera frontal acha seu rosto, os olhos e o pescoço (simulado) te seguem, o microfone fica aberto como no robô e o Claude responde com voz. Fale por cima para interromper.</p>
   <div class="aviso">A chave da Anthropic fica só neste aparelho e vai direto para a Anthropic; nenhum servidor nosso a vê. Use uma chave criada só para teste, com limite de gasto baixo no console, e apague depois. No robô de verdade a chave mora no servidor, nunca no tablet.</div>
   <label>Chave da API da Anthropic<input type="password" id="chave" autocomplete="off" placeholder="sk-ant-..."></label>
   <label class="marca"><input type="checkbox" id="guardar"> Guardar a chave neste aparelho</label>
   <label>Modelo<select id="modelo"><option value="claude-haiku-5-5">Haiku 5.5 (o do robô)</option><option value="claude-sonnet-5-5">Sonnet 5.5</option></select></label>
   <label class="marca"><input type="checkbox" id="saudar" checked> Cumprimentar sozinho quando o rosto aparece</label>
+  <label class="marca"><input type="checkbox" id="pausarAoFalar"> Pausar o microfone enquanto o robô fala (use se ele responder a si mesmo ou a voz ficar baixa)</label>
   <label class="marca"><input type="checkbox" id="verCam"> Mostrar a câmera</label>
   <label class="marca"><input type="checkbox" id="verPescoco" checked> Mostrar o pescoço simulado</label>
   <label>Voz<select id="voz"></select></label>
@@ -380,11 +381,11 @@ $('#voz').onchange = () => guardado.gravar('jandi.voz', $('#voz').value);
 function falar(frase) {
   if (!frase.trim() || !('speechSynthesis' in window)) return;
   filaFala.push(frase);
-  if (!falaAtual) proximaFala();
+  if (!falaAtual) { if ($('#pausarAoFalar').checked) pararSessao(); proximaFala(); }
 }
 function proximaFala() {
   const frase = filaFala.shift();
-  if (!frase) { falaAtual = null; falandoAgora = false; aoTerminarDeFalar?.(); return; }
+  if (!frase) { falaAtual = null; falandoAgora = false; aoTerminarDeFalar?.(); aoFimDaFalaDoRobo(); return; }
   const u = new SpeechSynthesisUtterance(frase);
   u.lang = 'pt-BR'; u.rate = 1.05;
   const v = vozes.find(v => v.voiceURI === $('#voz').value); if (v) u.voice = v;
@@ -402,57 +403,99 @@ function esperarFimDaFala() {
   return new Promise(r => { aoTerminarDeFalar = () => { aoTerminarDeFalar = null; r(); }; });
 }
 
-// ======================= voz: ouvir (segurar para falar) =======================
+// ======================= voz: ouvir o tempo todo =======================
+// Como no robô de verdade: o microfone fica aberto, uma pausa de ~1 s fecha a fala da pessoa e,
+// se ela falar por cima do robô, ele para e escuta. O que o próprio robô diz (eco no alto-falante)
+// é reconhecido pelas palavras e não conta como fala da pessoa.
 const Reconhecimento = window.SpeechRecognition || window.webkitSpeechRecognition;
-let sessaoVoz = null, segurando = false;
-// Cada aperto do botão tem a própria sessão: um aperto novo nunca mistura texto nem microfone com o anterior
-function comecarAOuvir() {
-  if (!Reconhecimento) { $('#entradaTexto').classList.add('ver'); $('#texto').focus(); return; }
-  conversa?.ctrl?.abort(); calar();
-  if (sessaoVoz) { sessaoVoz.ativa = false; try { sessaoVoz.rec.abort(); } catch {} sessaoVoz = null; }
-  if (!conversa) iniciarConversa({ semSaudacao: true });
-  if (!conversa) { E.estado = 'livre'; return; }
-  const s = { rec: new Reconhecimento(), acumulado: '', final: '', parcial: '', ativa: true, segurando: true };
-  sessaoVoz = s; segurando = true;
-  E.estado = 'ouvindo';
-  $('#falar').classList.add('ativo'); $('#falar').textContent = 'Solte para enviar';
-  const r = s.rec;
+const PAUSA_FIM_MS = 1100;
+let escutaLigada = true, sessaoVoz = null, segurando = false, textoDoRobo = '', falhasSeguidas = 0;
+const juntar = (...partes) => partes.join(' ').replace(/\s+/g, ' ').trim();
+const palavras = s => normalizar(s).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(p => p.length >= 3);
+const roboFalando = () => !!falaAtual || filaFala.length > 0;
+function pareceFalaDaPessoa(texto) {
+  const ditas = palavras(texto);
+  if (ditas.length < 2) return false;
+  const doRobo = new Set(palavras(textoDoRobo));
+  const novas = ditas.filter(p => !doRobo.has(p));
+  return novas.length >= 2 && novas.length / ditas.length >= 0.4;
+}
+function atualizarBotao() {
+  const b = $('#falar');
+  if (!iniciado) return;
+  b.classList.toggle('ativo', escutaLigada);
+  b.textContent = !Reconhecimento ? 'Sem microfone: use o teclado' : escutaLigada ? 'Microfone aberto · toque para pausar' : 'Microfone pausado · toque para abrir';
+}
+function pararSessao() {
+  const s = sessaoVoz; sessaoVoz = null; segurando = false;
+  if (!s) return;
+  s.ativa = false; clearTimeout(s.timer);
+  try { s.rec.abort(); } catch {}
+}
+function novaSessao() {
+  pararSessao();
+  if (!Reconhecimento || !escutaLigada || !iniciado) return;
+  if ($('#pausarAoFalar').checked && roboFalando()) return; // modo "um de cada vez"
+  const r = new Reconhecimento();
+  const s = { rec: r, ativa: true, texto: '', interrompeu: false, timer: 0, inicio: Date.now() };
+  sessaoVoz = s;
   r.lang = 'pt-BR'; r.interimResults = true; r.continuous = true; r.maxAlternatives = 1;
   r.onresult = e => {
     if (!s.ativa) return;
-    let fim = '', meio = '';
-    for (let i = 0; i < e.results.length; i++) (e.results[i].isFinal ? (fim += e.results[i][0].transcript) : (meio += e.results[i][0].transcript));
-    s.final = fim; s.parcial = meio;
-    legenda(`<span id="ouvindo">${escapar(juntar(s.acumulado, fim, meio)) || 'Ouvindo...'}</span>`, true);
+    let texto = '';
+    for (let i = 0; i < e.results.length; i++) texto += e.results[i][0].transcript;
+    texto = juntar(texto);
+    if (!texto) return;
+    falhasSeguidas = 0;
+    if (roboFalando() && !s.interrompeu) {
+      if (!pareceFalaDaPessoa(texto)) return; // é o eco do próprio robô
+      s.interrompeu = true;
+      log('você falou por cima: o robô para e escuta');
+      conversa?.ctrl?.abort(); calar();
+      E.estado = 'ouvindo';
+    }
+    s.texto = texto; segurando = true;
+    ultimaConversa = Date.now();
+    if (E.estado !== 'pensando') E.estado = conversa ? 'ouvindo' : E.estado;
+    legenda(`<span id="ouvindo">${escapar(texto)}</span>`, true);
+    clearTimeout(s.timer);
+    s.timer = setTimeout(() => fecharFala(s), PAUSA_FIM_MS);
   };
-  r.onerror = e => { if (s.ativa && e.error !== 'aborted' && e.error !== 'no-speech') { log('microfone: ' + e.error); pil('#pVoz', 'microfone: ' + e.error, 'erro'); } };
-  // o Safari encerra a sessão numa pausa: guarda o que já ouviu antes de recomeçar
-  r.onend = () => { s.acumulado = juntar(s.acumulado, s.final, s.parcial); s.final = s.parcial = ''; if (s.ativa && s.segurando) try { r.start(); } catch {} };
-  try { r.start(); pil('#pVoz', 'ouvindo', 'ok'); } catch (e) { log('não deu para ouvir: ' + e.message); }
+  r.onerror = e => {
+    if (!s.ativa) return;
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      escutaLigada = false; atualizarBotao();
+      pil('#pVoz', 'microfone bloqueado: toque no botão', 'erro');
+      log('o Safari bloqueou o microfone (' + e.error + '); toque no botão para abrir de novo');
+    } else if (e.error !== 'no-speech' && e.error !== 'aborted') log('microfone: ' + e.error);
+  };
+  // O Safari fecha a sessão sozinho de tempos em tempos: entrega o que ouviu e abre outra
+  r.onend = () => {
+    if (!s.ativa) return;
+    if (s.texto && (!roboFalando() || s.interrompeu)) { fecharFala(s); return; }
+    if (Date.now() - s.inicio < 1000 && ++falhasSeguidas > 5) { // reinício em laço: dá um respiro
+      s.ativa = false; sessaoVoz = null; setTimeout(novaSessao, 3000); return;
+    }
+    novaSessao();
+  };
+  try { r.start(); pil('#pVoz', 'ouvindo', 'ok'); }
+  catch (e) { s.ativa = false; sessaoVoz = null; log('não deu para abrir o microfone: ' + e.message); }
 }
-const juntar = (...partes) => partes.join(' ').replace(/\s+/g, ' ').trim();
-async function pararDeOuvir() {
-  const s = sessaoVoz;
-  if (!s || !s.segurando) return;
-  s.segurando = false; segurando = false;
-  $('#falar').classList.remove('ativo'); $('#falar').textContent = 'Segure para falar';
-  await esperar(450); // o Safari entrega as últimas palavras logo depois de soltar
-  try { s.rec.stop(); } catch {}
-  await esperar(250);
-  const texto = juntar(s.acumulado, s.final, s.parcial);
-  s.ativa = false;
-  if (sessaoVoz === s) sessaoVoz = null;
-  if (sessaoVoz) return; // já há outro aperto em andamento: este texto foi interrompido por ele
-  pil('#pVoz', 'voz pronta', 'ok');
-  if (!texto) { E.estado = conversa ? 'ouvindo' : 'livre'; legenda(''); return; }
+function fecharFala(s) {
+  if (!s.ativa) return;
+  const texto = s.texto;
+  novaSessao(); // já fica ouvindo de novo enquanto o Claude pensa
+  if (!texto) return;
+  // Sem conversa e sem ninguém na frente da câmera, conversa do corredor não aciona o robô
+  if (!conversa && Date.now() - ultimaFace > 3000) { legenda(''); log('fala ignorada: ninguém na frente da câmera'); return; }
   enviarFala(texto);
 }
+// Quando o robô termina de falar, o eco que ficou na sessão é descartado
+function aoFimDaFalaDoRobo() {
+  if (sessaoVoz && sessaoVoz.interrompeu) return;
+  novaSessao();
+}
 const bFalar = $('#falar');
-bFalar.addEventListener('pointerdown', e => { if (!iniciado) return; e.preventDefault(); bFalar.setPointerCapture?.(e.pointerId); comecarAOuvir(); });
-bFalar.addEventListener('pointerup', () => pararDeOuvir());
-bFalar.addEventListener('pointercancel', () => pararDeOuvir());
-bFalar.addEventListener('contextmenu', e => e.preventDefault());
-
 // ======================= Claude (API direto do aparelho, só para este teste) =======================
 const chave = () => ($('#chave').value || '').trim();
 const FERRAMENTAS = [{
@@ -576,7 +619,7 @@ async function turno(textoUsuario) {
     const saida = filtro.processar(pedaco);
     if (!saida) return;
     if (E.estado === 'pensando') E.estado = 'falando';
-    falado += saida; frase += saida;
+    falado += saida; frase += saida; textoDoRobo = falado;
     legenda(escapar(falado), true);
     // fala por frases para começar a responder antes do fim do texto
     const m = frase.match(/^([\s\S]*?[.!?…])(\s+)([\s\S]*)$/);
@@ -621,6 +664,7 @@ async function turno(textoUsuario) {
   if (conversa !== c) return;
   ultimaConversa = Date.now();
   if (!segurando) E.estado = 'ouvindo';
+  if (!sessaoVoz) novaSessao();
 }
 
 // ======================= interface =======================
@@ -648,13 +692,21 @@ if (salva) { $('#chave').value = salva; $('#guardar').checked = true; }
 const modeloSalvo = guardado.ler('jandi.modelo'); if (modeloSalvo && [...$('#modelo').options].some(o => o.value === modeloSalvo)) $('#modelo').value = modeloSalvo;
 pil('#pClaude', chave() ? 'Claude pronto' : 'sem chave', chave() ? 'ok' : 'erro');
 pil('#pVoz', Reconhecimento ? 'voz pronta' : 'sem reconhecimento de voz', Reconhecimento ? '' : 'erro');
+const pausaSalva = guardado.ler('jandi.pausar'); if (pausaSalva === '1') $('#pausarAoFalar').checked = true;
+$('#pausarAoFalar').onchange = () => { guardado.gravar('jandi.pausar', $('#pausarAoFalar').checked ? '1' : '0'); novaSessao(); };
 pc.classList.add('ver');
 requestAnimationFrame(desenhar);
 legenda('Toque em Começar. O iPhone vai pedir câmera, microfone e movimento.');
 
 // Começar: no iPhone, câmera, sensores e voz só ligam depois de um toque
 bFalar.addEventListener('click', async () => {
-  if (iniciado) return;
+  if (iniciado) {
+    // tocar no botão abre ou pausa o microfone (e, dentro do toque, o Safari sempre deixa abrir)
+    escutaLigada = !escutaLigada;
+    if (escutaLigada) { log('microfone aberto'); novaSessao(); } else { log('microfone pausado'); pararSessao(); pil('#pVoz', 'microfone pausado'); }
+    atualizarBotao();
+    return;
+  }
   iniciado = true;
   bFalar.textContent = 'Ligando...';
   try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch {}
@@ -664,8 +716,10 @@ bFalar.addEventListener('click', async () => {
   await giro;
   try { await navigator.wakeLock?.request('screen'); } catch {}
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') navigator.wakeLock?.request('screen').catch(() => {}); });
-  bFalar.textContent = 'Segure para falar';
-  legenda(chave() ? 'Olhe para a tela: eu te cumprimento.' : 'Toque na engrenagem e coloque a chave da Anthropic.');
+  atualizarBotao();
+  novaSessao();
+  if (!Reconhecimento) $('#entradaTexto').classList.add('ver');
+  legenda(chave() ? 'Olhe para a tela e fale à vontade: o microfone fica aberto.' : 'Toque na engrenagem e coloque a chave da Anthropic.');
   if (!chave()) abrirAjustes();
 });
 window.jandi = { E, N, FW, comando, criarFiltro, estado: () => ({ conversa: !!conversa, estado: E.estado }) };
